@@ -1,0 +1,22 @@
+[package]
+name = "memory"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+axum = "0.8.9"
+chrono = "0.4.45"
+hex = "0.4.3"
+rand = "0.10.3"
+rmcp = { version = "=3.4.1", features = ["server", "macros", "transport-streamable-http-server"] }
+schemars = "1.2.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+thiserror = "2.0.21"
+tokio = { version = "1.53.1", features = ["full"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+turso = "=0.7.2"
+uuid = { version = "1.26.1", features = ["v7"] }

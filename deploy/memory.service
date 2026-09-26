@@ -1,0 +1,33 @@
+[Unit]
+Description=Memory MCP server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=memory
+Group=memory
+Environment=MEMORY_DB=/var/lib/memory/memory.db
+Environment=MEMORY_TOKENS=/etc/memory/tokens
+Environment=MEMORY_ADDR=127.0.0.1:8750
+Environment=MEMORY_ALLOWED_HOSTS=memory.example.com
+ExecStart=/usr/local/bin/memory serve
+Restart=on-failure
+StateDirectory=memory
+StateDirectoryMode=0700
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
