@@ -95,11 +95,17 @@ pub async fn middleware(State(tokens): State<Tokens>, mut req: Request, next: Ne
             req.extensions_mut().insert(client.clone());
             next.run(req).await
         }
-        None => (
-            StatusCode::UNAUTHORIZED,
-            [(header::WWW_AUTHENTICATE, "Bearer")],
-            "missing or invalid bearer token\n",
-        )
-            .into_response(),
+        None => {
+            tracing::warn!(
+                token_present = token.is_some(),
+                "rejected unauthenticated request"
+            );
+            (
+                StatusCode::UNAUTHORIZED,
+                [(header::WWW_AUTHENTICATE, "Bearer")],
+                "missing or invalid bearer token\n",
+            )
+                .into_response()
+        }
     }
 }

@@ -52,7 +52,7 @@ Check `docs/fts.md` in the Turso repo for the current FTS query syntax and token
 ## Auth
 
 - One bearer token per client, each with a level: **read**, **add**, or **consolidate**.
-- Claude Code and Codex work with bearer tokens. claude.ai and ChatGPT connectors expect **OAuth**; do that second (reuse the Withings server's setup if possible).
+- Every client sends its token as an `Authorization: Bearer` header: Claude Code and Codex from their config files, claude.ai through a custom connector header. OAuth isn't needed; add it only if a client (maybe ChatGPT) can't send custom headers. An OAuth server was built and then removed on 2026-09-27 for this reason.
 
 ## Things to get right early
 
@@ -65,7 +65,7 @@ Check `docs/fts.md` in the Turso repo for the current FTS query syntax and token
 2. Connect Claude Code to it and use it for a few days.
 3. Deploy to a VM as a systemd service, with backups.
 4. Add `memory_supersede` and the consolidate permission.
-5. OAuth, then connect claude.ai and ChatGPT.
+5. Connect claude.ai (done, via a header token) and ChatGPT (check whether it supports custom headers first).
 
 **Later:** a consolidation job, a scheduled agent run that merges duplicates via `memory_supersede`, possibly run by my own agent. Also embeddings, if keyword search starts missing things.
 

@@ -19,8 +19,11 @@ Environment: `MEMORY_DB` (default `memory.db`), `MEMORY_TOKENS` (default `tokens
 Runs at `https://memory.example.com/mcp` on its own VM.
 
 - Deploy: `deploy/deploy.sh root@memory.example.com` (rsyncs source, builds on the VM, installs, restarts).
-- Tokens: `ssh root@memory.example.com 'memory token <source> <level> >> /etc/memory/tokens && systemctl restart memory'`
-  (the token is printed to stderr; only its hash is stored).
+- Tokens: `deploy/token.sh <source> <read|add|consolidate>` mints a token on the server (which stores only its
+  hash), restarts it, and saves the token in the macOS keychain (`memory-mcp-token` / `<source>`). Revoke by
+  deleting the line from `/etc/memory/tokens` and restarting.
+- Inspect: `deploy/inspect.sh` opens a fresh snapshot of the production DB in `tursodb` (plain `sqlite3` can't read
+  the FTS index); `deploy/inspect.sh "SELECT ..."` runs one query. The server stops for about a second while it copies.
 - Backups: `memory-backup.timer` runs nightly at 03:30 UTC. It stops the server for a few seconds, then pushes a
   tarball of `/var/lib/memory` over rsync+SSH to `BACKUP_TARGET` (`user@host`, and optionally `BACKUP_SSH_PORT`,
   set in `/etc/memory/backup.env` on the server, with the key in `/etc/memory/backup_key`), into `backups/`, keeping 30 days.

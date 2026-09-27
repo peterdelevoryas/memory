@@ -1,4 +1,8 @@
 memory.example.com {
 	encode gzip
+	log {
+		output stderr
+		format json
+	}
 	reverse_proxy 127.0.0.1:8750
 }
