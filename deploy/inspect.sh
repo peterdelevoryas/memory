@@ -10,7 +10,7 @@
 # sqlite3 can't open the file (it doesn't understand the FTS index), so this
 # uses tursodb pinned to the same version as the turso crate.
 set -euo pipefail
-HOST=${MEMORY_HOST:-root@memory.example.com}
+. "$(dirname "$0")/lib.sh"
 TURSO_VERSION=0.7.2  # keep in sync with Cargo.toml
 
 sql_b64=$(printf '%s' "${1:-}" | base64 | tr -d '\n')

@@ -16,9 +16,10 @@ Environment: `MEMORY_DB` (default `memory.db`), `MEMORY_TOKENS` (default `tokens
 
 ## Production
 
-Runs at `https://memory.example.com/mcp` on its own VM.
+Runs on any Linux server you can SSH into as root (set up with `deploy/cloud-init.yaml`, written for Ubuntu 24.04).
+Its hostname lives in `deploy/config` (untracked; copy `deploy/config.example`), which the deploy scripts read; below it's `memory.example.com`.
 
-- Deploy: `deploy/deploy.sh root@memory.example.com` (rsyncs source, builds on the VM, installs, restarts).
+- Deploy: `deploy/deploy.sh` (rsyncs source, builds on the VM, installs, restarts).
 - Tokens: `deploy/token.sh <source> <read|add|consolidate>` mints a token on the server (which stores only its
   hash), restarts it, and saves the token in the macOS keychain (`memory-mcp-token` / `<source>`). Revoke by
   deleting the line from `/etc/memory/tokens` and restarting.

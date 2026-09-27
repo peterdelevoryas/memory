@@ -7,7 +7,7 @@
 # Usage: deploy/token.sh <source> <read|add|consolidate>
 # Read it back: security find-generic-password -s memory-mcp-token -a <source> -w
 set -euo pipefail
-HOST=${MEMORY_HOST:-root@memory.example.com}
+. "$(dirname "$0")/lib.sh"
 [ $# -eq 2 ] || { sed -n 's/^# \{0,1\}//; 2,8p' "$0" >&2; exit 2; }
 source=$1 level=$2
 

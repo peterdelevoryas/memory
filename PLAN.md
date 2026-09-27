@@ -6,7 +6,7 @@ A shared memory database for all my AI tools: Claude Code, Codex, claude.ai (web
 
 - A **remote MCP server** in Rust, using the [`rmcp`](https://crates.io/crates/rmcp) crate. Every surface already speaks MCP, so this is one integration, not seven.
 - Storage: **embedded [Turso](https://github.com/tursodatabase/turso)** (the `turso` crate). Pin an exact version; it's pre-1.0 (0.7.2 stable, 0.8 in pre-release).
-- Runs on its **own VM**, independent of the Withings MCP server and of the agent's VM (which will run `bash`). Caddy terminates TLS at `memory.example.com`; nightly backups go to separate storage over rsync+SSH.
+- Runs on its **own VM**, independent of the Withings MCP server and of the agent's VM (which will run `bash`). Caddy terminates TLS for its own subdomain; nightly backups go to separate storage over rsync+SSH.
 
 ## Data model
 

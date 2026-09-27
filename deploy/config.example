@@ -1,0 +1,4 @@
+# Copy to deploy/config (untracked) and set your server's public hostname.
+# The deploy scripts read it; deploy.sh fills it into the Caddyfile and the
+# systemd unit on the server.
+MEMORY_DOMAIN=memory.example.com

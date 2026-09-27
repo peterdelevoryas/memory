@@ -1,4 +1,4 @@
-memory.example.com {
+@DOMAIN@ {
 	encode gzip
 	log {
 		output stderr
