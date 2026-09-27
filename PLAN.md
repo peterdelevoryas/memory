@@ -10,44 +10,49 @@ A shared memory database for all my AI tools: Claude Code, Codex, claude.ai (web
 
 ## Data model
 
+Memory mirrors Claude Code's file-based memory: a set of **named notes**, each with a one-line description, plus a generated index (the equivalent of `MEMORY.md`).
+
 ```sql
 CREATE TABLE memories (
-  id          TEXT PRIMARY KEY,  -- UUIDv7
-  text        TEXT NOT NULL,
-  kind        TEXT,              -- fact, preference, project, ...
+  id          TEXT PRIMARY KEY,  -- UUIDv7; one row per version of a note
+  name        TEXT,              -- slug, unique among live notes (NULL for pre-notes rows)
+  description TEXT,              -- one line, shown in the index
+  text        TEXT NOT NULL,     -- the note body
+  kind        TEXT,              -- user | feedback | project | reference
   tags        TEXT,              -- comma-separated
-  scope       TEXT NOT NULL,     -- personal, work, health, agent, ...
-  source      TEXT NOT NULL,     -- which surface wrote it (from the token): claude-code, chatgpt, agent, ...
+  scope       TEXT NOT NULL,     -- personal | work | health | agent
+  source      TEXT NOT NULL,     -- which client wrote it (from the token)
   origin      TEXT NOT NULL,     -- user_stated | agent_inferred | external, declared by the writer
   created_at  TEXT NOT NULL
 );
-CREATE INDEX memories_fts ON memories USING fts (text);
+CREATE INDEX memories_notes_fts ON memories USING fts (name, description, text);
 
 CREATE TABLE supersessions (
   old_id      TEXT NOT NULL REFERENCES memories(id),
-  new_id      TEXT REFERENCES memories(id),  -- NULL for a retraction
-  reason      TEXT NOT NULL,     -- corrected | outdated | merged | split | retracted
-  source      TEXT NOT NULL,     -- who did it
+  new_id      TEXT REFERENCES memories(id),  -- NULL when a note is forgotten
+  reason      TEXT NOT NULL,     -- revised | corrected | outdated | merged | split | retracted
+  source      TEXT NOT NULL,
   created_at  TEXT NOT NULL
 );
 ```
 
 Rules:
-- **Nothing is edited or deleted in place.** Replacing memories adds new ones plus `supersessions` rows (many-to-many, so merges and splits both work). A memory is live iff it is no row's `old_id`. This keeps history and makes consolidation reversible.
-- `memory_supersede` is **compare-and-swap**: it fails without writing if any old memory is missing or already superseded.
+- **Nothing is edited or deleted in place.** Writing a note again adds a new version and a `supersessions` row; a row is live iff it is no row's `old_id`. History is always kept.
+- Writes are **compare-and-swap**: revising or forgetting a note takes the version you read and fails if it changed since; `memory_supersede` fails if any old version is no longer current.
 - A replacement's `origin` defaults to the least trusted origin of what it replaces, so consolidation can't launder `external` content into `user_stated`.
-- Search skips superseded memories by default.
-
-Check `docs/fts.md` in the Turso repo for the current FTS query syntax and tokenizer options before writing queries. Turso has exact vector search today; approximate vector indexes are on its roadmap. Start with full-text only.
+- **The index** is generated deterministically (no model) from live notes' names and descriptions, grouped by scope, within a size budget (newest first). It's appended to the server instructions, so clients that honor them (Claude Code) get it in the system prompt with no tool call. Only `user_stated` and `agent_inferred` notes are listed: anything in the index lands in every agent's system prompt, so external content stays search-only.
 
 ## MCP tools
 
 | Tool | What it does | Permission |
 |---|---|---|
-| `memory_search` | Full-text search, filtered by scope, returns the top N | read |
-| `memory_get` | Fetch one memory by id, with its supersession links in both directions | read |
-| `memory_add` | Add a memory; `source` comes from the client's token, not the request | add |
-| `memory_supersede` | Correct, update, merge, split, or retract memories (compare-and-swap) | consolidate |
+| `memory_index` | The generated index (also in the server instructions) | read |
+| `memory_read` | A note's current version by name, with its history links | read |
+| `memory_search` | Full-text search over names, descriptions, and bodies | read |
+| `memory_get` | One version by id | read |
+| `memory_write` | Create a note, or revise one given the version you read; `source` comes from the token | add |
+| `memory_forget` | Forget a note given the version you read (history kept) | consolidate |
+| `memory_supersede` | Merge, split, correct, or retract several notes at once | consolidate |
 
 ## Auth
 
@@ -67,6 +72,11 @@ Check `docs/fts.md` in the Turso repo for the current FTS query syntax and token
 4. Add `memory_supersede` and the consolidate permission.
 5. Connect claude.ai (done, via a header token) and ChatGPT (check whether it supports custom headers first).
 
-**Later:** a consolidation job, a scheduled agent run that merges duplicates via `memory_supersede`, possibly run by my own agent. Also embeddings, if keyword search starts missing things.
+**Later:**
+
+- **The server stays inference-free.** All judgment (merging, summarizing) happens in scheduled agents that talk to it over MCP with their own token (e.g. `source: consolidator`), run as Claude Code routines or by my own agent.
+- **Consolidation job:** a scheduled agent that merges duplicates and fixes contradictions via `memory_supersede`.
+- **Keeping the index small:** the deterministic index works while descriptions are good and notes are few. As it outgrows its budget, the consolidation agent merges and prunes *notes* (which shrinks the index) rather than writing a separate summary. If a model-written summary ever becomes necessary: versioned, records its source ids, proposed by the agent and published only after I approve a diff. Consolidation will need a `memory_list` tool (paginated, with "changed since").
+- Embeddings, if keyword search starts missing things.
 
 **Before starting**, spend an hour on prior art: mem0, Letta, Zep/Graphiti, basic-memory, and the MCP reference "memory" server.
