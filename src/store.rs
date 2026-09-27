@@ -39,7 +39,9 @@ const LIVE: &str =
 
 /// Where a memory's content came from, as declared by the agent that wrote it.
 /// Ordered from least to most trusted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Origin {
     /// Taken from tool output, web pages, documents, or other content the user didn't write.
@@ -139,7 +141,11 @@ impl Store {
             .await
             .with_context(|| format!("opening database {path}"))?;
         let store = Self { db };
-        store.conn()?.execute_batch(SCHEMA).await.context("applying schema")?;
+        store
+            .conn()?
+            .execute_batch(SCHEMA)
+            .await
+            .context("applying schema")?;
         Ok(store)
     }
 
@@ -174,7 +180,9 @@ impl Store {
         }
         match (reason, new.is_empty()) {
             (Reason::Retracted, false) => {
-                return Err(SupersedeError::Invalid("a retraction takes no new memories".into()));
+                return Err(SupersedeError::Invalid(
+                    "a retraction takes no new memories".into(),
+                ));
             }
             (r, true) if r != Reason::Retracted => {
                 return Err(SupersedeError::Invalid(
@@ -186,7 +194,9 @@ impl Store {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).await?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await?;
 
         let mut weakest = Origin::UserStated;
         for id in &old_ids {
@@ -210,7 +220,8 @@ impl Store {
         let mut created = Vec::new();
         for n in new {
             let origin = n.origin.unwrap_or(weakest);
-            let memory = build(n, source, origin).map_err(|e| SupersedeError::Invalid(format!("{e:#}")))?;
+            let memory =
+                build(n, source, origin).map_err(|e| SupersedeError::Invalid(format!("{e:#}")))?;
             insert(&tx, &memory).await?;
             created.push(memory);
         }
@@ -253,7 +264,11 @@ impl Store {
         let memory = row_to_memory(&row)?;
         let supersedes = links(&conn, "new_id", "old_id", id).await?;
         let superseded_by = links(&conn, "old_id", "new_id", id).await?;
-        Ok(Some(MemoryDetail { memory, supersedes, superseded_by }))
+        Ok(Some(MemoryDetail {
+            memory,
+            supersedes,
+            superseded_by,
+        }))
     }
 
     /// Full-text search, best match first. `query` uses Tantivy query syntax;
@@ -445,9 +460,25 @@ mod tests {
     async fn add_get_search() -> Result<()> {
         let (store, path) = temp_store().await?;
         let a = store
-            .add(new("James prefers Rust for side projects", "Personal", Some(Origin::UserStated)), "t")
+            .add(
+                new(
+                    "James prefers Rust for side projects",
+                    "Personal",
+                    Some(Origin::UserStated),
+                ),
+                "t",
+            )
             .await?;
-        store.add(new("The Withings server runs on a VPS", "work", Some(Origin::External)), "t").await?;
+        store
+            .add(
+                new(
+                    "The Withings server runs on a VPS",
+                    "work",
+                    Some(Origin::External),
+                ),
+                "t",
+            )
+            .await?;
         assert_eq!(a.tags, vec!["rust"]);
         assert_eq!(a.scope, "personal");
 
@@ -461,7 +492,9 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].id, a.id);
 
-        let hits = store.search("rust OR vps", &["work".into()], false, 10).await?;
+        let hits = store
+            .search("rust OR vps", &["work".into()], false, 10)
+            .await?;
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].scope, "work");
 
@@ -474,14 +507,36 @@ mod tests {
     #[tokio::test]
     async fn supersede_merge_split_retract() -> Result<()> {
         let (store, _) = temp_store().await?;
-        let a = store.add(new("James lives in Oakland", "personal", Some(Origin::UserStated)), "t").await?;
-        let b = store.add(new("James lives near Lake Merritt", "personal", Some(Origin::External)), "t").await?;
+        let a = store
+            .add(
+                new(
+                    "James lives in Oakland",
+                    "personal",
+                    Some(Origin::UserStated),
+                ),
+                "t",
+            )
+            .await?;
+        let b = store
+            .add(
+                new(
+                    "James lives near Lake Merritt",
+                    "personal",
+                    Some(Origin::External),
+                ),
+                "t",
+            )
+            .await?;
 
         // Merge: origin defaults to the weakest input.
         let merged = store
             .supersede(
                 vec![a.id.clone(), b.id.clone()],
-                vec![new("James lives near Lake Merritt in Oakland", "personal", None)],
+                vec![new(
+                    "James lives near Lake Merritt in Oakland",
+                    "personal",
+                    None,
+                )],
                 Reason::Merged,
                 "consolidator",
             )
@@ -509,14 +564,22 @@ mod tests {
 
         // Compare-and-swap: superseding an already-superseded memory fails and writes nothing.
         let err = store
-            .supersede(vec![m.id.clone(), a.id.clone()], vec![new("x", "personal", None)], Reason::Corrected, "t")
+            .supersede(
+                vec![m.id.clone(), a.id.clone()],
+                vec![new("x", "personal", None)],
+                Reason::Corrected,
+                "t",
+            )
             .await
             .unwrap_err();
         assert!(matches!(err, SupersedeError::AlreadySuperseded(id) if id == a.id));
         assert!(!store.get(&m.id).await?.unwrap().memory.superseded);
         assert!(store.search("x", &[], true, 10).await?.is_empty());
 
-        let err = store.supersede(vec!["nope".into()], vec![], Reason::Retracted, "t").await.unwrap_err();
+        let err = store
+            .supersede(vec!["nope".into()], vec![], Reason::Retracted, "t")
+            .await
+            .unwrap_err();
         assert!(matches!(err, SupersedeError::NotFound(_)));
 
         // Split, with an explicit origin.
@@ -524,7 +587,11 @@ mod tests {
             .supersede(
                 vec![m.id.clone()],
                 vec![
-                    new("James lives in Oakland", "personal", Some(Origin::UserStated)),
+                    new(
+                        "James lives in Oakland",
+                        "personal",
+                        Some(Origin::UserStated),
+                    ),
                     new("James lives near Lake Merritt", "personal", None),
                 ],
                 Reason::Split,
@@ -536,14 +603,21 @@ mod tests {
         assert_eq!(store.get(&m.id).await?.unwrap().superseded_by.len(), 2);
 
         // Retract: no replacement.
-        assert!(store.supersede(vec![parts[1].id.clone()], vec![], Reason::Retracted, "t").await?.is_empty());
+        assert!(
+            store
+                .supersede(vec![parts[1].id.clone()], vec![], Reason::Retracted, "t")
+                .await?
+                .is_empty()
+        );
         let r = store.get(&parts[1].id).await?.unwrap();
         assert_eq!(r.superseded_by[0].id, None);
         assert_eq!(store.search("merritt", &[], false, 10).await?.len(), 0);
 
         // Retract with replacements, or replace with none, is rejected.
         assert!(matches!(
-            store.supersede(vec![parts[0].id.clone()], vec![], Reason::Corrected, "t").await,
+            store
+                .supersede(vec![parts[0].id.clone()], vec![], Reason::Corrected, "t")
+                .await,
             Err(SupersedeError::Invalid(_))
         ));
         Ok(())
@@ -552,13 +626,23 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn concurrent_supersede_only_one_wins() -> Result<()> {
         let (store, _) = temp_store().await?;
-        let a = store.add(new("contested fact", "work", Some(Origin::AgentInferred)), "t").await?;
+        let a = store
+            .add(
+                new("contested fact", "work", Some(Origin::AgentInferred)),
+                "t",
+            )
+            .await?;
         let attempts = (0..8).map(|i| {
             let store = store.clone();
             let id = a.id.clone();
             tokio::spawn(async move {
                 store
-                    .supersede(vec![id], vec![new(&format!("rewrite {i}"), "work", None)], Reason::Corrected, "t")
+                    .supersede(
+                        vec![id],
+                        vec![new(&format!("rewrite {i}"), "work", None)],
+                        Reason::Corrected,
+                        "t",
+                    )
                     .await
             })
         });

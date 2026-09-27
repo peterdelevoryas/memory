@@ -69,9 +69,13 @@ async fn serve() -> Result<()> {
         Arc::new(LocalSessionManager::default()),
         StreamableHttpServerConfig::default().with_allowed_hosts(allowed_hosts),
     );
-    let app = axum::Router::new()
-        .nest_service("/mcp", mcp)
-        .layer(axum::middleware::from_fn_with_state(tokens, auth::middleware));
+    let app =
+        axum::Router::new()
+            .nest_service("/mcp", mcp)
+            .layer(axum::middleware::from_fn_with_state(
+                tokens,
+                auth::middleware,
+            ));
 
     let listener = tokio::net::TcpListener::bind(&addr)
         .await

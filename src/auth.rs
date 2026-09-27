@@ -53,9 +53,16 @@ impl Tokens {
             }
             let fields: Vec<&str> = line.split_whitespace().collect();
             let [hash, source, level] = fields[..] else {
-                bail!("{}:{}: expected `<sha256> <source> <level>`", path.display(), n + 1);
+                bail!(
+                    "{}:{}: expected `<sha256> <source> <level>`",
+                    path.display(),
+                    n + 1
+                );
             };
-            let client = Client { source: source.to_string(), level: level.parse()? };
+            let client = Client {
+                source: source.to_string(),
+                level: level.parse()?,
+            };
             if map.insert(hash.to_lowercase(), client).is_some() {
                 bail!("{}:{}: duplicate token hash", path.display(), n + 1);
             }

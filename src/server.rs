@@ -142,7 +142,10 @@ impl MemoryServer {
         require(&parts, Level::Read)?;
         match self.store.get(&p.id).await.map_err(internal)? {
             Some(m) => Ok(Json(m)),
-            None => Err(ErrorData::invalid_params(format!("no memory with id {}", p.id), None)),
+            None => Err(ErrorData::invalid_params(
+                format!("no memory with id {}", p.id),
+                None,
+            )),
         }
     }
 
@@ -150,7 +153,12 @@ impl MemoryServer {
         description = "Save a new memory. Search first to avoid duplicates. Memories are \
             never edited in place. Save only durable facts the user would want recalled \
             later, never secrets or credentials.",
-        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
     )]
     async fn memory_add(
         &self,
@@ -182,7 +190,12 @@ impl MemoryServer {
             retract them. Old memories are kept as history and drop out of search. \
             Atomic compare-and-swap: fails without writing anything if any old memory \
             is missing or already superseded; re-read and retry.",
-        annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = false, open_world_hint = false)
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
     )]
     async fn memory_supersede(
         &self,
@@ -202,7 +215,13 @@ impl MemoryServer {
         let new = p
             .new
             .into_iter()
-            .map(|r| NewMemory { text: r.text, kind: r.kind, tags: r.tags, scope: r.scope, origin: r.origin })
+            .map(|r| NewMemory {
+                text: r.text,
+                kind: r.kind,
+                tags: r.tags,
+                scope: r.scope,
+                origin: r.origin,
+            })
             .collect();
         let old_ids = p.old_ids.clone();
         let memories = self
@@ -240,7 +259,10 @@ fn require(parts: &Parts, level: Level) -> Result<Client, ErrorData> {
         .ok_or_else(|| ErrorData::internal_error("request was not authenticated", None))?;
     if client.level < level {
         return Err(ErrorData::invalid_request(
-            format!("token for {} has {:?} access; this needs {level:?}", client.source, client.level),
+            format!(
+                "token for {} has {:?} access; this needs {level:?}",
+                client.source, client.level
+            ),
             None,
         ));
     }
@@ -250,7 +272,9 @@ fn require(parts: &Parts, level: Level) -> Result<Client, ErrorData> {
 fn check_len(text: &str) -> Result<(), ErrorData> {
     if text.chars().count() > MAX_TEXT_CHARS {
         return Err(ErrorData::invalid_params(
-            format!("text is longer than {MAX_TEXT_CHARS} characters; split it into separate memories"),
+            format!(
+                "text is longer than {MAX_TEXT_CHARS} characters; split it into separate memories"
+            ),
             None,
         ));
     }
@@ -269,18 +293,32 @@ mod tests {
 
     /// Every key a schema marks as required must be present in the serialized
     /// value, recursively; strict MCP clients reject the result otherwise.
-    fn check_required(schema: &serde_json::Value, value: &serde_json::Value, defs: &serde_json::Value, path: &str) {
+    fn check_required(
+        schema: &serde_json::Value,
+        value: &serde_json::Value,
+        defs: &serde_json::Value,
+        path: &str,
+    ) {
         let schema = match schema.get("$ref").and_then(|r| r.as_str()) {
             Some(r) => &defs[r.rsplit('/').next().unwrap()],
             None => schema,
         };
-        if let (Some(req), Some(obj)) = (schema.get("required").and_then(|r| r.as_array()), value.as_object()) {
+        if let (Some(req), Some(obj)) = (
+            schema.get("required").and_then(|r| r.as_array()),
+            value.as_object(),
+        ) {
             for key in req {
                 let key = key.as_str().unwrap();
-                assert!(obj.contains_key(key), "{path}: missing required key {key:?} in {value}");
+                assert!(
+                    obj.contains_key(key),
+                    "{path}: missing required key {key:?} in {value}"
+                );
             }
         }
-        if let (Some(props), Some(obj)) = (schema.get("properties").and_then(|p| p.as_object()), value.as_object()) {
+        if let (Some(props), Some(obj)) = (
+            schema.get("properties").and_then(|p| p.as_object()),
+            value.as_object(),
+        ) {
             for (k, v) in obj {
                 if let Some(s) = props.get(k) {
                     check_required(s, v, defs, &format!("{path}.{k}"));
@@ -306,14 +344,26 @@ mod tests {
         std::fs::create_dir_all(&dir)?;
         let store = Store::open(dir.join("t.db").to_str().unwrap()).await?;
         // No kind, no tags: the sparsest possible memory.
-        let bare = NewMemory { text: "bare fact".into(), kind: None, tags: vec![], scope: "s".into(), origin: Some(Origin::External) };
+        let bare = NewMemory {
+            text: "bare fact".into(),
+            kind: None,
+            tags: vec![],
+            scope: "s".into(),
+            origin: Some(Origin::External),
+        };
         let m = store.add(bare, "t").await?;
         check(&m);
         check(&store.get(&m.id).await?.unwrap());
-        check(&Memories { memories: store.search("bare", &[], true, 10).await? });
-        store.supersede(vec![m.id.clone()], vec![], Reason::Retracted, "t").await?;
+        check(&Memories {
+            memories: store.search("bare", &[], true, 10).await?,
+        });
+        store
+            .supersede(vec![m.id.clone()], vec![], Reason::Retracted, "t")
+            .await?;
         check(&store.get(&m.id).await?.unwrap());
-        check(&Memories { memories: store.search("bare", &[], true, 10).await? });
+        check(&Memories {
+            memories: store.search("bare", &[], true, 10).await?,
+        });
         Ok(())
     }
 }
