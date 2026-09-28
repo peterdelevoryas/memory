@@ -11,6 +11,8 @@ Environment=MEMORY_TOKENS=/etc/memory/tokens
 Environment=MEMORY_ADDR=127.0.0.1:8750
 Environment=MEMORY_ALLOWED_HOSTS=@DOMAIN@
 ExecStart=/usr/local/bin/memory serve
+# Re-reads the tokens file without a restart.
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 StateDirectory=memory
 StateDirectoryMode=0700

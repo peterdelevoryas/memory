@@ -4,5 +4,11 @@
 		output stderr
 		format json
 	}
-	reverse_proxy 127.0.0.1:8750
+	reverse_proxy 127.0.0.1:8750 {
+		# While the server restarts (deploys, nightly backup), hold requests and
+		# retry the connection instead of failing them. Only requests that never
+		# reached the server are retried, so this is safe for writes.
+		lb_try_duration 15s
+		lb_try_interval 250ms
+	}
 }

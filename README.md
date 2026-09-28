@@ -19,10 +19,12 @@ Environment: `MEMORY_DB` (default `memory.db`), `MEMORY_TOKENS` (default `tokens
 Runs on any Linux server you can SSH into as root (set up with `deploy/cloud-init.yaml`, written for Ubuntu 24.04).
 Its hostname lives in `deploy/config` (untracked; copy `deploy/config.example`), which the deploy scripts read; below it's `memory.example.com`.
 
-- Deploy: `deploy/deploy.sh` (rsyncs source, builds on the VM, installs, restarts).
+- Deploy: `deploy/deploy.sh` (rsyncs source, builds on the VM, installs, restarts). Restarts don't interrupt clients:
+  the server is session-less (like MCP 2026-07-28), finishes in-flight requests on SIGTERM, and Caddy holds new
+  requests for up to 15s while it comes back.
 - Tokens: `deploy/token.sh <source> <read|add|consolidate>` mints a token on the server (which stores only its
-  hash), restarts it, and saves the token in the macOS keychain (`memory-mcp-token` / `<source>`). Revoke by
-  deleting the line from `/etc/memory/tokens` and restarting.
+  hash), reloads the tokens file (`systemctl reload memory`, no restart), and saves the token in the macOS keychain (`memory-mcp-token` / `<source>`). Revoke by
+  deleting the line from `/etc/memory/tokens` and running `systemctl reload memory`.
 - Inspect: `deploy/inspect.sh` opens a fresh snapshot of the production DB in `tursodb` (plain `sqlite3` can't read
   the FTS index); `deploy/inspect.sh "SELECT ..."` runs one query. The server stops for about a second while it copies.
 - Backups: `memory-backup.timer` runs nightly at 03:30 UTC. It stops the server for a few seconds, then pushes a

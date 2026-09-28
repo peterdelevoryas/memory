@@ -6,8 +6,9 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{Context, Result, bail};
 use rmcp::transport::streamable_http_server::{
-    StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
+    StreamableHttpServerConfig, StreamableHttpService, session::never::NeverSessionManager,
 };
+use tokio::signal::unix::{SignalKind, signal};
 
 const USAGE: &str = "\
 usage:
@@ -66,24 +67,46 @@ async fn serve() -> Result<()> {
 
     let mcp = StreamableHttpService::new(
         move || Ok(server::MemoryServer::new(store.clone())),
-        Arc::new(LocalSessionManager::default()),
-        StreamableHttpServerConfig::default().with_allowed_hosts(allowed_hosts),
+        // No sessions (as in MCP 2026-07-28): every request stands alone, so a
+        // restart never strands a connected client.
+        Arc::new(NeverSessionManager::default()),
+        StreamableHttpServerConfig::default()
+            .with_allowed_hosts(allowed_hosts)
+            .with_legacy_session_mode(false)
+            .with_json_response(true),
     );
     let app =
         axum::Router::new()
             .nest_service("/mcp", mcp)
             .layer(axum::middleware::from_fn_with_state(
-                tokens,
+                tokens.clone(),
                 auth::middleware,
             ));
+
+    // `systemctl reload memory` re-reads the tokens file without a restart.
+    let mut hangup = signal(SignalKind::hangup())?;
+    tokio::spawn(async move {
+        while hangup.recv().await.is_some() {
+            match tokens.reload() {
+                Ok(n) => tracing::info!(tokens = n, "reloaded tokens"),
+                Err(e) => tracing::error!("reloading tokens (keeping the old ones): {e:#}"),
+            }
+        }
+    });
 
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .with_context(|| format!("binding {addr}"))?;
     tracing::info!("listening on http://{addr}/mcp (db: {db_path})");
     axum::serve(listener, app)
+        // Finish in-flight requests on SIGTERM (systemctl stop/restart) or Ctrl-C.
         .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
+            let mut term = signal(SignalKind::terminate()).expect("installing SIGTERM handler");
+            tokio::select! {
+                _ = term.recv() => {}
+                _ = tokio::signal::ctrl_c() => {}
+            }
+            tracing::info!("shutting down");
         })
         .await?;
     Ok(())

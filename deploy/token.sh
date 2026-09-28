@@ -16,7 +16,7 @@ set -euo pipefail
 err=$(mktemp); trap 'rm -f $err' EXIT
 line=$(memory token "$1" "$2" 2>"$err") || { cat "$err" >&2; exit 1; }
 echo "$line" >> /etc/memory/tokens
-systemctl restart memory
+systemctl reload memory
 sed -n 2p "$err"
 REMOTE
 )
