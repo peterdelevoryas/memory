@@ -35,9 +35,10 @@ Its hostname lives in `deploy/config` (untracked; copy `deploy/config.example`),
   tarball of `/var/lib/memory` over rsync+SSH to `BACKUP_TARGET` (`user@host`, and optionally `BACKUP_SSH_PORT`,
   set in `/etc/memory/backup.env` on the server, with the key in `/etc/memory/backup_key`), into `backups/`, keeping 30 days.
   To restore, stop `memory`, extract the tarball's `db/` into `/var/lib/memory/`, `chown -R memory:memory`, and start it.
-- Moving to a new server: stop `memory`, detach the volume, attach it to the new server, add
-  `/dev/disk/by-id/<volume> /var/lib/memory ext4 defaults,nofail,discard 0 2` to `/etc/fstab`, mount it, and run
-  `deploy/deploy.sh`.
+- The volume's ext4 filesystem is labeled `memory-data` (`e2label <device> memory-data` once, for a new volume), and
+  `cloud-init.yaml` mounts that label at `/var/lib/memory`. Moving to a new server: create it with `cloud-init.yaml`,
+  copy `/etc/memory/{tokens,backup.env,backup_key}` over, stop `memory` on the old server, move the volume, reboot the
+  new server so it mounts, and run `deploy/deploy.sh`.
 
 ## Consolidation
 
