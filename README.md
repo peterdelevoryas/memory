@@ -38,8 +38,8 @@ A nightly scheduled agent keeps memory tidy: it reads every note with
 `memory_list`, merges overlaps, fixes contradictions and stale facts, and
 tightens descriptions, then reports what it changed. Its prompt is
 [`consolidator.md`](consolidator.md); run it from any client with a
-`consolidate` token (here, a claude.ai scheduled task). Every change keeps
-history, and `memory_restore` undoes one.
+`consolidate` token (here, a claude.ai scheduled task). Notes are edited in
+place with no history; the nightly backups are the way back.
 
 ## Connecting clients
 

@@ -13,48 +13,39 @@ A shared memory database for all my AI tools: Claude Code, Codex, claude.ai (web
 Memory mirrors Claude Code's file-based memory: a set of **named notes**, each with a one-line description, plus a generated index (the equivalent of `MEMORY.md`).
 
 ```sql
-CREATE TABLE memories (
-  id          TEXT PRIMARY KEY,  -- UUIDv7; one row per version of a note
-  name        TEXT,              -- slug, unique among live notes (NULL for pre-notes rows)
-  description TEXT,              -- one line, shown in the index
+CREATE TABLE notes (
+  name        TEXT PRIMARY KEY,  -- slug
+  version     TEXT NOT NULL,     -- new UUIDv7 on every write; used for compare-and-swap
+  description TEXT NOT NULL,     -- one line, shown in the index
   text        TEXT NOT NULL,     -- the note body
   kind        TEXT,              -- user | feedback | project | reference
   tags        TEXT,              -- comma-separated
   scope       TEXT NOT NULL,     -- personal | work | health | agent
-  source      TEXT NOT NULL,     -- which client wrote it (from the token)
+  source      TEXT NOT NULL,     -- which client last wrote it (from the token)
   origin      TEXT NOT NULL,     -- user_stated | agent_inferred | external, declared by the writer
-  created_at  TEXT NOT NULL
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
 );
-CREATE INDEX memories_notes_fts ON memories USING fts (name, description, text);
-
-CREATE TABLE supersessions (
-  old_id      TEXT NOT NULL REFERENCES memories(id),
-  new_id      TEXT REFERENCES memories(id),  -- NULL when a note is forgotten
-  reason      TEXT NOT NULL,     -- revised | corrected | outdated | merged | split | retracted
-  source      TEXT NOT NULL,
-  created_at  TEXT NOT NULL
-);
+CREATE INDEX notes_fts ON notes USING fts (name, description, text);
 ```
 
 Rules:
-- **Nothing is edited or deleted in place.** Writing a note again adds a new version and a `supersessions` row; a row is live iff it is no row's `old_id`. History is always kept.
-- Writes are **compare-and-swap**: revising or forgetting a note takes the version you read and fails if it changed since; `memory_supersede` fails if any old version is no longer current.
-- A replacement's `origin` defaults to the least trusted origin of what it replaces, so consolidation can't launder `external` content into `user_stated`.
-- **The index** is generated deterministically (no model) from live notes' names and descriptions, grouped by scope, and served by the `memory_index` tool, which agents call at the start of a task. It's deliberately not in the server's connection instructions: those are frozen at connect time, land in the system prompt with elevated trust, and Claude Code truncates them at 2048 characters. Only `user_stated` and `agent_inferred` notes are listed; external content is reachable through `memory_list` and `memory_search`.
+- **Notes are edited in place and forgetting deletes.** There is no history: memory is fixed forward, and nightly backups are the safety net. (The first design kept every version in a `supersessions` table; it was dropped on 2026-09-28 because nothing used the history, `memory_write` covered merges, and "forget" should really forget personal data.)
+- Writes are **compare-and-swap**: revising or forgetting a note takes the version you read and fails if it changed since.
+- **The index** is generated deterministically (no model) from notes' names and descriptions, grouped by scope, and served by the `memory_index` tool, which agents call at the start of a task. It's deliberately not in the server's connection instructions: those are frozen at connect time, land in the system prompt with elevated trust, and Claude Code truncates them at 2048 characters. Only `user_stated` and `agent_inferred` notes are listed; external content is reachable through `memory_list` and `memory_search`.
 
 ## MCP tools
 
 | Tool | What it does | Permission |
 |---|---|---|
 | `memory_index` | The generated index: every note's name and description | read |
-| `memory_read` | A note's current version by name, with its history links | read |
+| `memory_read` | A note by name, with its current version | read |
 | `memory_search` | Full-text search over names, descriptions, and bodies | read |
-| `memory_get` | One version by id | read |
-| `memory_list` | Every live note, paginated in write order; with `since`, only changes (and removals) since then | read |
-| `memory_write` | Create a note, or revise one given the version you read; `source` comes from the token | add |
-| `memory_forget` | Forget a note given the version you read (history kept) | consolidate |
-| `memory_supersede` | Merge, split, correct, or retract several notes at once | consolidate |
-| `memory_restore` | Make an old version current again (undo) | consolidate |
+| `memory_list` | Every note, paginated by name; with `since`, only notes written or revised since then | read |
+| `memory_write` | Create a note, or replace one given the version you read; `source` comes from the token | add |
+| `memory_forget` | Delete a note given the version you read | consolidate |
+
+To merge two notes, revise one with the combined content and forget the other.
 
 ## Auth
 
@@ -74,7 +65,7 @@ Rules:
 4. Add `memory_supersede` and the consolidate permission.
 5. Connect claude.ai (done, via a header token) and ChatGPT (check whether it supports custom headers first).
 
-**Consolidation:** the server stays inference-free; all judgment happens in agents that talk to it over MCP. A nightly claude.ai scheduled task (via the Memory connector, so it writes as `claude-ai`) follows [`consolidator.md`](consolidator.md): it reads everything with `memory_list`, merges overlaps, resolves contradictions, rewrites stale dated facts, and tightens descriptions, at most 15 changes per run, then reports what it did. Changes apply directly; history and `memory_restore` make them undoable.
+**Consolidation:** the server stays inference-free; all judgment happens in agents that talk to it over MCP. A nightly claude.ai scheduled task (via the Memory connector, so it writes as `claude-ai`) follows [`consolidator.md`](consolidator.md): it reads everything with `memory_list`, merges overlaps, resolves contradictions, rewrites stale dated facts, and tightens descriptions, at most 15 changes per run, then reports what it did. Changes apply directly; the nightly backups are the way back.
 
 **Later:** embeddings, if keyword search starts missing things.
 
