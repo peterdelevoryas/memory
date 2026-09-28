@@ -25,4 +25,7 @@ cutoff=$(date -u -d "-$KEEP_DAYS days" +%Y-%m-%d)
     "${SSH[@]}" "$BACKUP_TARGET" rm "backups/$f"
   fi
 done
+# Tell the server when the last backup succeeded; GET /health reports its age.
+date -u +%Y-%m-%dT%H:%M:%SZ > /var/lib/memory/last-backup
+chown memory:memory /var/lib/memory/last-backup
 echo "backed up memory-$stamp.tar.gz"

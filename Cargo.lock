@@ -1572,6 +1572,7 @@ dependencies = [
  "axum",
  "chrono",
  "hex",
+ "libc",
  "rand 0.10.3",
  "rmcp",
  "schemars",

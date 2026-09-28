@@ -1,4 +1,5 @@
 mod auth;
+mod health;
 mod server;
 mod store;
 
@@ -64,6 +65,17 @@ async fn serve() -> Result<()> {
 
     let store = store::Store::open(&db_path).await?;
     let tokens = auth::Tokens::load(&tokens_path)?;
+    let health = health::Health::new(health::Config {
+        store: store.clone(),
+        data_dir: std::path::Path::new(&db_path)
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(std::path::Path::new("."))
+            .to_path_buf(),
+        max_disk_percent: env("MEMORY_DISK_MAX_PERCENT", "85").parse()?,
+        backup_stamp: std::env::var("MEMORY_BACKUP_STAMP").ok().map(PathBuf::from),
+        max_backup_age_hours: env("MEMORY_BACKUP_MAX_AGE_HOURS", "26").parse()?,
+    });
 
     let mcp = StreamableHttpService::new(
         move || Ok(server::MemoryServer::new(store.clone())),
@@ -75,13 +87,17 @@ async fn serve() -> Result<()> {
             .with_legacy_session_mode(false)
             .with_json_response(true),
     );
-    let app =
-        axum::Router::new()
-            .nest_service("/mcp", mcp)
-            .layer(axum::middleware::from_fn_with_state(
-                tokens.clone(),
-                auth::middleware,
-            ));
+    let app = axum::Router::new()
+        .nest_service("/mcp", mcp)
+        .layer(axum::middleware::from_fn_with_state(
+            tokens.clone(),
+            auth::middleware,
+        ))
+        // Unauthenticated, for the external monitor; outside the auth layer.
+        .route(
+            "/health",
+            axum::routing::get(health::handler).with_state(health),
+        );
 
     // `systemctl reload memory` re-reads the tokens file without a restart.
     let mut hangup = signal(SignalKind::hangup())?;

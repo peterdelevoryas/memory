@@ -8,6 +8,7 @@ anyhow = "1.0.104"
 axum = "0.8.9"
 chrono = "0.4.45"
 hex = "0.4.3"
+libc = "0.2.189"
 rand = "0.10.3"
 rmcp = { version = "=3.4.1", features = ["server", "macros", "transport-streamable-http-server"] }
 schemars = "1.2.2"

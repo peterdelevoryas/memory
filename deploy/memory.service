@@ -10,6 +10,7 @@ Environment=MEMORY_DB=/var/lib/memory/memory.db
 Environment=MEMORY_TOKENS=/etc/memory/tokens
 Environment=MEMORY_ADDR=127.0.0.1:8750
 Environment=MEMORY_ALLOWED_HOSTS=@DOMAIN@
+Environment=MEMORY_BACKUP_STAMP=/var/lib/memory/last-backup
 ExecStart=/usr/local/bin/memory serve
 # Re-reads the tokens file without a restart.
 ExecReload=/bin/kill -HUP $MAINPID

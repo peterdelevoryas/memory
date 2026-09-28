@@ -203,6 +203,15 @@ impl Store {
         Ok(())
     }
 
+    pub async fn count(&self) -> Result<u64> {
+        let mut rows = self.conn()?.query("SELECT count(*) FROM notes", ()).await?;
+        let row = rows.next().await?.context("count returned no rows")?;
+        match row.get_value(0)? {
+            Value::Integer(n) => Ok(n as u64),
+            other => bail!("count: expected an integer, got {other:?}"),
+        }
+    }
+
     pub async fn read(&self, name: &str) -> Result<Option<Memory>> {
         by_name(&self.conn()?, name).await
     }
@@ -566,9 +575,7 @@ mod tests {
             "prefers-rust"
         );
         assert_eq!(store.search("withings", &[], 10).await?.len(), 1);
-        let hits = store
-            .search("rust OR vps", &["work".into()], 10)
-            .await?;
+        let hits = store.search("rust OR vps", &["work".into()], 10).await?;
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].scope, "work");
 
