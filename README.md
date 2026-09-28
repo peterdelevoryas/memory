@@ -17,6 +17,8 @@ Environment: `MEMORY_DB` (default `memory.db`), `MEMORY_TOKENS` (default `tokens
 ## Production
 
 Runs on any Linux server you can SSH into as root (set up with `deploy/cloud-init.yaml`, written for Ubuntu 24.04).
+The data lives on a block-storage volume mounted at `/var/lib/memory`, so the server itself is disposable; the service
+won't start unless that path is a mount point, so a missing volume can't turn into an empty database.
 Its hostname lives in `deploy/config` (untracked; copy `deploy/config.example`), which the deploy scripts read; below it's `memory.example.com`.
 
 - Deploy: `deploy/deploy.sh` (rsyncs source, builds on the VM, installs, restarts). Restarts don't interrupt clients:
@@ -33,6 +35,9 @@ Its hostname lives in `deploy/config` (untracked; copy `deploy/config.example`),
   tarball of `/var/lib/memory` over rsync+SSH to `BACKUP_TARGET` (`user@host`, and optionally `BACKUP_SSH_PORT`,
   set in `/etc/memory/backup.env` on the server, with the key in `/etc/memory/backup_key`), into `backups/`, keeping 30 days.
   To restore, stop `memory`, extract the tarball's `db/` into `/var/lib/memory/`, `chown -R memory:memory`, and start it.
+- Moving to a new server: stop `memory`, detach the volume, attach it to the new server, add
+  `/dev/disk/by-id/<volume> /var/lib/memory ext4 defaults,nofail,discard 0 2` to `/etc/fstab`, mount it, and run
+  `deploy/deploy.sh`.
 
 ## Consolidation
 

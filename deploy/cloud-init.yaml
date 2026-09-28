@@ -1,6 +1,7 @@
 #cloud-config
 # First-boot setup for the memory server VM. The binary itself is built and
-# installed by deploy.sh.
+# installed by deploy.sh. The data volume is attached and mounted at
+# /var/lib/memory separately (see the README).
 package_update: true
 package_upgrade: true
 packages:
