@@ -1,6 +1,6 @@
 # memory
 
-A shared memory MCP server for AI tools. See [PLAN.md](PLAN.md) for the design.
+Shared memory between AI agents: an MCP server that Claude Code, claude.ai, Codex, and other agents all read and write. See [PLAN.md](PLAN.md) for the design.
 
 ## Run locally
 
