@@ -30,9 +30,45 @@ Its hostname lives in `deploy/config` (untracked; copy `deploy/config.example`),
   set in `/etc/memory/backup.env` on the server, with the key in `/etc/memory/backup_key`), into `backups/`, keeping 30 days.
   To restore, stop `memory`, extract the tarball's `db/` into `/var/lib/memory/`, `chown -R memory:memory`, and start it.
 
-## Connect Claude Code
+## Connecting clients
+
+Every client authenticates the same way: its own bearer token, sent as an
+`Authorization: Bearer <token>` header. Mint one per client, named for the
+client (that name becomes the `source` on everything it writes):
+
+```sh
+deploy/token.sh claude-ai consolidate   # or read / add
+security find-generic-password -s memory-mcp-token -a claude-ai -w | pbcopy
+```
+
+### Claude Code
 
 ```sh
 claude mcp add --scope user --transport http memory https://memory.example.com/mcp \
   --header "Authorization: Bearer <token>"
 ```
+
+### claude.ai
+
+No OAuth needed: claude.ai custom connectors can send request headers.
+
+1. In claude.ai, open Settings → Connectors and add a custom connector.
+2. URL: `https://memory.example.com/mcp`
+3. Add a request header named `Authorization` with the value `Bearer <token>`
+   (the word `Bearer`, a space, then the token).
+
+To make it the only memory, turn off claude.ai's own memory in Settings → Memory.
+
+### Codex
+
+In `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.memory]
+url = "https://memory.example.com/mcp"
+http_headers = { "Authorization" = "Bearer <token>" }
+```
+
+A static header (rather than `bearer_token_env_var`) also works for Codex
+inside the ChatGPT desktop app, which reads the same config but not your
+shell's environment.
