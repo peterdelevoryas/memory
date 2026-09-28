@@ -1,5 +1,3 @@
-use std::sync::{Arc, RwLock};
-
 use anyhow::{Context, Result, bail};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -85,6 +83,8 @@ pub enum Reason {
     Split,
     /// The old memory should be forgotten, with no replacement.
     Retracted,
+    /// An old version was made current again.
+    Restored,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -113,6 +113,19 @@ pub struct Link {
     pub reason: Reason,
     pub source: String,
     pub created_at: String,
+}
+
+/// A note that stopped being live (see `Store::removed_since`).
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct Removed {
+    /// The version that was current when the note was removed.
+    pub id: String,
+    pub name: String,
+    pub reason: Reason,
+    pub source: String,
+    pub at: String,
+    /// Names of the notes that replaced it; empty if it was forgotten.
+    pub replaced_by: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -159,8 +172,6 @@ impl From<turso::Error> for WriteError {
 #[derive(Clone)]
 pub struct Store {
     db: Database,
-    /// Index lines for live notes, newest first: (scope, line).
-    index: Arc<RwLock<Vec<(String, String)>>>,
 }
 
 impl Store {
@@ -182,12 +193,7 @@ impl Store {
             .await
             .context("creating indexes")?;
         drop(conn);
-        let store = Self {
-            db,
-            index: Arc::default(),
-        };
-        store.refresh_index().await.context("building index")?;
-        Ok(store)
+        Ok(Self { db })
     }
 
     fn conn(&self) -> Result<turso::Connection> {
@@ -243,13 +249,11 @@ impl Store {
                 insert(&tx, &memory).await?;
                 link(&tx, &cur.id, Some(&memory.id), Reason::Revised, source).await?;
                 tx.commit().await?;
-                self.refresh_index().await?;
                 return Ok(memory);
             }
         }
         insert(&tx, &memory).await?;
         tx.commit().await?;
-        self.refresh_index().await?;
         Ok(memory)
     }
 
@@ -337,7 +341,6 @@ impl Store {
             }
         }
         tx.commit().await?;
-        self.refresh_index().await?;
         Ok(created)
     }
 
@@ -415,81 +418,169 @@ impl Store {
         Ok(out)
     }
 
-    /// The index of live notes as of the last write, at most `budget`
-    /// characters: one line per note, grouped by scope. Only notes stated by
-    /// the user or inferred by an agent are listed (external content stays
-    /// searchable but never lands in an agent's system prompt). Over budget,
-    /// the most recently written notes win.
-    pub fn index(&self, budget: usize) -> String {
-        const OMITTED_RESERVE: usize = 80;
-        let entries = self.index.read().unwrap();
-        let mut kept: Vec<&(String, String)> = Vec::new();
-        let mut scopes: Vec<&str> = Vec::new();
-        let mut used = 0;
-        for (i, entry) in entries.iter().enumerate() {
-            let (scope, line) = entry;
-            let header = if scopes.contains(&scope.as_str()) {
-                0
-            } else {
-                scope.len() + 6
-            };
-            let reserve = if i + 1 < entries.len() {
-                OMITTED_RESERVE
-            } else {
-                0
-            };
-            if used + header + line.len() + 1 + reserve > budget {
-                break;
-            }
-            used += header + line.len() + 1;
-            if header > 0 {
-                scopes.push(scope);
-            }
-            kept.push(entry);
-        }
-        let omitted = entries.len() - kept.len();
-        kept.sort();
-        let mut out = String::new();
-        let mut current = None;
-        for (scope, line) in kept {
-            if current != Some(scope) {
-                out.push_str(&format!("\n### {scope}\n"));
-                current = Some(scope);
-            }
-            out.push_str(line);
-            out.push('\n');
-        }
-        if omitted > 0 {
-            out.push_str(&format!(
-                "\n({omitted} older notes not listed: call memory_index.)\n"
-            ));
-        }
-        out.trim().to_string()
-    }
-
-    async fn refresh_index(&self) -> Result<()> {
+    /// The index of live notes: one line per note, grouped by scope. Only
+    /// notes stated by the user or inferred by an agent are listed; external
+    /// content stays out (memory_list and memory_search still find it).
+    pub async fn index(&self) -> Result<String> {
         let mut rows = self
             .conn()?
             .query(
                 format!(
-                    "SELECT name, description, kind, scope FROM memories \
+                    "SELECT scope, name, description, kind FROM memories \
                      WHERE name IS NOT NULL AND origin IN ('user_stated', 'agent_inferred') AND {LIVE} \
-                     ORDER BY created_at DESC"
+                     ORDER BY scope, name"
                 ),
                 (),
             )
             .await?;
-        let mut entries = Vec::new();
+        let mut out = String::new();
+        let mut current: Option<String> = None;
         while let Some(row) = rows.next().await? {
-            let name = required(&row, 0)?;
-            let description = text(&row, 1)?.unwrap_or_default();
-            let kind = text(&row, 2)?
+            let scope = required(&row, 0)?;
+            if current.as_ref() != Some(&scope) {
+                out.push_str(&format!("\n### {scope}\n"));
+                current = Some(scope);
+            }
+            let name = required(&row, 1)?;
+            let description = text(&row, 2)?.unwrap_or_default();
+            let kind = text(&row, 3)?
                 .map(|k| format!(" ({k})"))
                 .unwrap_or_default();
-            entries.push((required(&row, 3)?, format!("- {name}: {description}{kind}")));
+            out.push_str(&format!("- {name}: {description}{kind}\n"));
         }
-        *self.index.write().unwrap() = entries;
-        Ok(())
+        Ok(out.trim().to_string())
+    }
+
+    /// Live notes in the order they were written, a page at a time. With
+    /// `since`, only notes whose current version was written after it.
+    /// `after` is the last id of the previous page.
+    pub async fn list(
+        &self,
+        since: Option<&str>,
+        scopes: &[String],
+        after: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<Memory>> {
+        let mut sql = format!("SELECT {COLUMNS} FROM memories WHERE {LIVE}");
+        let mut params = Vec::new();
+        if let Some(since) = since {
+            params.push(Value::Text(since.to_string()));
+            sql.push_str(&format!(" AND memories.created_at > ?{}", params.len()));
+        }
+        if let Some(after) = after {
+            params.push(Value::Text(after.to_string()));
+            sql.push_str(&format!(" AND memories.id > ?{}", params.len()));
+        }
+        if !scopes.is_empty() {
+            let placeholders: Vec<String> = scopes
+                .iter()
+                .map(|s| {
+                    params.push(Value::Text(s.clone()));
+                    format!("?{}", params.len())
+                })
+                .collect();
+            sql.push_str(&format!(
+                " AND memories.scope IN ({})",
+                placeholders.join(", ")
+            ));
+        }
+        sql.push_str(&format!(" ORDER BY memories.id LIMIT {limit}"));
+        let mut rows = self.conn()?.query(sql, params).await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            out.push(row_to_memory(&row)?);
+        }
+        Ok(out)
+    }
+
+    /// Notes that stopped being live after `since`: forgotten, or merged or
+    /// renamed into notes with other names. Replacements under the same name
+    /// (revisions) aren't removals.
+    pub async fn removed_since(&self, since: &str) -> Result<Vec<Removed>> {
+        let mut rows = self
+            .conn()?
+            .query(
+                "SELECT memories.id, memories.name, supersessions.reason, supersessions.source, \
+                        supersessions.created_at, \
+                        (SELECT n.name FROM memories n WHERE n.id = supersessions.new_id) \
+                 FROM supersessions JOIN memories ON memories.id = supersessions.old_id \
+                 WHERE supersessions.created_at > ?1 AND memories.name IS NOT NULL \
+                   AND NOT EXISTS (SELECT 1 FROM memories live WHERE live.name = memories.name \
+                     AND NOT EXISTS (SELECT 1 FROM supersessions s2 WHERE s2.old_id = live.id)) \
+                 ORDER BY supersessions.created_at",
+                vec![Value::Text(since.to_string())],
+            )
+            .await?;
+        let mut out: Vec<Removed> = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let id = required(&row, 0)?;
+            let replaced_by = text(&row, 5)?;
+            if let Some(existing) = out.iter_mut().find(|r| r.id == id) {
+                existing.replaced_by.extend(replaced_by);
+                continue;
+            }
+            out.push(Removed {
+                id,
+                name: required(&row, 1)?,
+                reason: parse_enum(&required(&row, 2)?)?,
+                source: required(&row, 3)?,
+                at: required(&row, 4)?,
+                replaced_by: replaced_by.into_iter().collect(),
+            });
+        }
+        Ok(out)
+    }
+
+    /// Makes the old version `id` the current version of its note again, by
+    /// writing a copy of it. If the note has a current version, it must be
+    /// `expected_version` (compare-and-swap); if the note was forgotten or
+    /// merged away, the name is recreated.
+    pub async fn restore(
+        &self,
+        id: &str,
+        expected_version: Option<&str>,
+        source: &str,
+    ) -> Result<Memory, WriteError> {
+        let mut conn = self.conn()?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await?;
+        let Some(old) = by_id(&tx, id).await? else {
+            return Err(WriteError::NotFound(id.to_string()));
+        };
+        let Some(name) = old.name.clone() else {
+            return Err(WriteError::Invalid(
+                "only named notes can be restored".into(),
+            ));
+        };
+        if !old.superseded {
+            return Err(WriteError::Invalid(format!(
+                "{id} is already the current version of {name:?}"
+            )));
+        }
+        let current = live_by_name(&tx, &name).await?;
+        match (&current, expected_version) {
+            (Some(cur), Some(expected)) if cur.id == expected => {}
+            (Some(cur), _) => {
+                return Err(WriteError::Conflict(format!(
+                    "note {name:?} has current version {}; read it and pass that as expected_version",
+                    cur.id
+                )));
+            }
+            (None, _) => {}
+        }
+        let restored = Memory {
+            id: uuid::Uuid::now_v7().to_string(),
+            source: source.to_string(),
+            created_at: now(),
+            superseded: false,
+            ..old.clone()
+        };
+        insert(&tx, &restored).await?;
+        let replaced = current.as_ref().map_or(old.id.as_str(), |c| c.id.as_str());
+        link(&tx, replaced, Some(&restored.id), Reason::Restored, source).await?;
+        tx.commit().await?;
+        Ok(restored)
     }
 }
 
@@ -1100,30 +1191,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn index_lists_trusted_live_notes_within_budget() -> Result<()> {
+    async fn index_lists_every_trusted_live_note() -> Result<()> {
         let (store, _) = temp_store().await?;
-        assert_eq!(store.index(10_000), "");
-        store
-            .write(
-                note("prefers-rust", "x", "personal", Some(Origin::UserStated)),
-                None,
-                "t",
-            )
-            .await?;
-        store
-            .write(
-                note("deploy-target", "x", "work", Some(Origin::AgentInferred)),
-                None,
-                "t",
-            )
-            .await?;
-        store
-            .write(
-                note("from-web", "x", "work", Some(Origin::External)),
-                None,
-                "t",
-            )
-            .await?;
+        assert_eq!(store.index().await?, "");
+        for (name, scope, origin) in [
+            ("prefers-rust", "personal", Origin::UserStated),
+            ("deploy-target", "work", Origin::AgentInferred),
+            ("from-web", "work", Origin::External),
+        ] {
+            store
+                .write(note(name, "x", scope, Some(origin)), None, "t")
+                .await?;
+        }
         let gone = store
             .write(
                 note("old-fact", "x", "work", Some(Origin::UserStated)),
@@ -1132,25 +1211,152 @@ mod tests {
             )
             .await?;
         store.forget("old-fact", &gone.id, "t").await?;
-
-        let index = store.index(10_000);
         assert_eq!(
-            index,
+            store.index().await?,
             "### personal\n- prefers-rust: about prefers-rust (user)\n\n### work\n- deploy-target: about deploy-target (user)"
         );
+        // No budget: a hundred notes are all listed.
+        for i in 0..100 {
+            store
+                .write(
+                    note(&format!("n-{i:03}"), "x", "agent", Some(Origin::UserStated)),
+                    None,
+                    "t",
+                )
+                .await?;
+        }
+        let index = store.index().await?;
+        assert!(index.contains("- n-000:") && index.contains("- n-099:"));
+        Ok(())
+    }
 
-        // Over budget, the newest notes are kept.
+    #[tokio::test]
+    async fn list_pages_and_changes_since() -> Result<()> {
+        let (store, _) = temp_store().await?;
+        let mut ids = Vec::new();
+        for i in 0..5 {
+            let scope = if i % 2 == 0 { "personal" } else { "work" };
+            let m = store
+                .write(
+                    note(&format!("n-{i}"), "x", scope, Some(Origin::External)),
+                    None,
+                    "t",
+                )
+                .await?;
+            ids.push(m.id);
+        }
+        // Pages in write order, including external notes.
+        let page1 = store.list(None, &[], None, 2).await?;
+        assert_eq!(
+            page1.iter().map(|m| &m.id).collect::<Vec<_>>(),
+            vec![&ids[0], &ids[1]]
+        );
+        let page2 = store.list(None, &[], Some(&page1[1].id), 2).await?;
+        assert_eq!(page2[0].id, ids[2]);
+        let rest = store.list(None, &[], Some(&page2[1].id), 10).await?;
+        assert_eq!(rest.len(), 1);
+        assert_eq!(store.list(None, &["work".into()], None, 10).await?.len(), 2);
+
+        // Since a checkpoint: revisions and new notes are listed; removals are reported.
+        let checkpoint = now();
+        std::thread::sleep(std::time::Duration::from_millis(5));
         store
             .write(
-                note("newest", "x", "personal", Some(Origin::UserStated)),
+                note("n-0", "revised", "personal", Some(Origin::UserStated)),
+                Some(ids[0].clone()),
+                "t",
+            )
+            .await?;
+        store.forget("n-1", &ids[1], "t").await?;
+        store
+            .supersede(
+                vec![ids[2].clone(), ids[3].clone()],
+                vec![note("n-2", "merged", "personal", None)],
+                Reason::Merged,
+                "t",
+            )
+            .await?;
+        let changed = store.list(Some(&checkpoint), &[], None, 10).await?;
+        let mut names: Vec<_> = changed.iter().filter_map(|m| m.name.clone()).collect();
+        names.sort();
+        assert_eq!(names, vec!["n-0", "n-2"]);
+        let removed = store.removed_since(&checkpoint).await?;
+        let summary: Vec<_> = removed
+            .iter()
+            .map(|r| (r.name.as_str(), r.reason, r.replaced_by.clone()))
+            .collect();
+        // n-0 was revised and n-2 kept its name, so neither counts as removed.
+        assert_eq!(
+            summary,
+            vec![
+                ("n-1", Reason::Retracted, vec![]),
+                ("n-3", Reason::Merged, vec!["n-2".to_string()])
+            ]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn restore_brings_back_old_versions() -> Result<()> {
+        let (store, _) = temp_store().await?;
+        let v1 = store
+            .write(
+                note(
+                    "home",
+                    "Lives in Oakland",
+                    "personal",
+                    Some(Origin::UserStated),
+                ),
                 None,
                 "t",
             )
             .await?;
-        let index = store.index(150);
-        assert!(index.len() <= 150, "{} chars: {index}", index.len());
-        assert!(index.contains("- newest:"), "{index}");
-        assert!(index.contains("2 older notes not listed"), "{index}");
+        let v2 = store
+            .write(
+                note(
+                    "home",
+                    "Lives in Berkeley",
+                    "personal",
+                    Some(Origin::AgentInferred),
+                ),
+                Some(v1.id.clone()),
+                "t",
+            )
+            .await?;
+
+        // Needs the current version, and refuses to restore the current one.
+        assert!(matches!(
+            store.restore(&v1.id, None, "r").await,
+            Err(WriteError::Conflict(_))
+        ));
+        assert!(matches!(
+            store.restore(&v1.id, Some("bogus"), "r").await,
+            Err(WriteError::Conflict(_))
+        ));
+        assert!(matches!(
+            store.restore(&v2.id, Some(&v2.id), "r").await,
+            Err(WriteError::Invalid(_))
+        ));
+        assert!(matches!(
+            store.restore("nope", None, "r").await,
+            Err(WriteError::NotFound(_))
+        ));
+
+        let v3 = store.restore(&v1.id, Some(&v2.id), "r").await?;
+        let current = store.read("home").await?.unwrap();
+        assert_eq!(current.memory.id, v3.id);
+        assert_eq!(current.memory.text, "Lives in Oakland");
+        assert_eq!(current.memory.origin, Origin::UserStated);
+        assert_eq!(current.memory.source, "r");
+        assert_eq!(current.supersedes[0].reason, Reason::Restored);
+        assert_eq!(current.supersedes[0].id.as_deref(), Some(v2.id.as_str()));
+
+        // A forgotten note comes back under its name.
+        store.forget("home", &v3.id, "t").await?;
+        assert!(store.read("home").await?.is_none());
+        let v4 = store.restore(&v3.id, None, "r").await?;
+        assert_eq!(store.read("home").await?.unwrap().memory.id, v4.id);
+        assert_eq!(store.search("oakland", &[], false, 10).await?.len(), 1);
         Ok(())
     }
 
@@ -1189,7 +1395,7 @@ mod tests {
             .await?;
         assert_eq!(store.search("fresh", &[], false, 10).await?.len(), 1);
         // Unnamed legacy rows stay out of the index.
-        assert!(!store.index(10_000).contains("legacy"));
+        assert!(!store.index().await?.contains("legacy"));
         // Opening again is a no-op.
         drop(store);
         Store::open(path.to_str().unwrap()).await?;

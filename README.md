@@ -30,6 +30,15 @@ Its hostname lives in `deploy/config` (untracked; copy `deploy/config.example`),
   set in `/etc/memory/backup.env` on the server, with the key in `/etc/memory/backup_key`), into `backups/`, keeping 30 days.
   To restore, stop `memory`, extract the tarball's `db/` into `/var/lib/memory/`, `chown -R memory:memory`, and start it.
 
+## Consolidation
+
+A nightly scheduled agent keeps memory tidy: it reads every note with
+`memory_list`, merges overlaps, fixes contradictions and stale facts, and
+tightens descriptions, then reports what it changed. Its prompt is
+[`consolidator.md`](consolidator.md); run it from any client with a
+`consolidate` token (here, a claude.ai scheduled task). Every change keeps
+history, and `memory_restore` undoes one.
+
 ## Connecting clients
 
 Every client authenticates the same way: its own bearer token, sent as an

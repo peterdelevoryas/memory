@@ -40,19 +40,21 @@ Rules:
 - **Nothing is edited or deleted in place.** Writing a note again adds a new version and a `supersessions` row; a row is live iff it is no row's `old_id`. History is always kept.
 - Writes are **compare-and-swap**: revising or forgetting a note takes the version you read and fails if it changed since; `memory_supersede` fails if any old version is no longer current.
 - A replacement's `origin` defaults to the least trusted origin of what it replaces, so consolidation can't launder `external` content into `user_stated`.
-- **The index** is generated deterministically (no model) from live notes' names and descriptions, grouped by scope, within a size budget (newest first). It's appended to the server instructions, so clients that honor them (Claude Code) get it in the system prompt with no tool call. Only `user_stated` and `agent_inferred` notes are listed: anything in the index lands in every agent's system prompt, so external content stays search-only.
+- **The index** is generated deterministically (no model) from live notes' names and descriptions, grouped by scope, and served by the `memory_index` tool, which agents call at the start of a task. It's deliberately not in the server's connection instructions: those are frozen at connect time, land in the system prompt with elevated trust, and Claude Code truncates them at 2048 characters. Only `user_stated` and `agent_inferred` notes are listed; external content is reachable through `memory_list` and `memory_search`.
 
 ## MCP tools
 
 | Tool | What it does | Permission |
 |---|---|---|
-| `memory_index` | The generated index (also in the server instructions) | read |
+| `memory_index` | The generated index: every note's name and description | read |
 | `memory_read` | A note's current version by name, with its history links | read |
 | `memory_search` | Full-text search over names, descriptions, and bodies | read |
 | `memory_get` | One version by id | read |
+| `memory_list` | Every live note, paginated in write order; with `since`, only changes (and removals) since then | read |
 | `memory_write` | Create a note, or revise one given the version you read; `source` comes from the token | add |
 | `memory_forget` | Forget a note given the version you read (history kept) | consolidate |
 | `memory_supersede` | Merge, split, correct, or retract several notes at once | consolidate |
+| `memory_restore` | Make an old version current again (undo) | consolidate |
 
 ## Auth
 
@@ -72,11 +74,8 @@ Rules:
 4. Add `memory_supersede` and the consolidate permission.
 5. Connect claude.ai (done, via a header token) and ChatGPT (check whether it supports custom headers first).
 
-**Later:**
+**Consolidation:** the server stays inference-free; all judgment happens in agents that talk to it over MCP. A nightly claude.ai scheduled task (via the Memory connector, so it writes as `claude-ai`) follows [`consolidator.md`](consolidator.md): it reads everything with `memory_list`, merges overlaps, resolves contradictions, rewrites stale dated facts, and tightens descriptions, at most 15 changes per run, then reports what it did. Changes apply directly; history and `memory_restore` make them undoable.
 
-- **The server stays inference-free.** All judgment (merging, summarizing) happens in scheduled agents that talk to it over MCP with their own token (e.g. `source: consolidator`), run as Claude Code routines or by my own agent.
-- **Consolidation job:** a scheduled agent that merges duplicates and fixes contradictions via `memory_supersede`.
-- **Keeping the index small:** the deterministic index works while descriptions are good and notes are few. As it outgrows its budget, the consolidation agent merges and prunes *notes* (which shrinks the index) rather than writing a separate summary. If a model-written summary ever becomes necessary: versioned, records its source ids, proposed by the agent and published only after I approve a diff. Consolidation will need a `memory_list` tool (paginated, with "changed since").
-- Embeddings, if keyword search starts missing things.
+**Later:** embeddings, if keyword search starts missing things.
 
 **Before starting**, spend an hour on prior art: mem0, Letta, Zep/Graphiti, basic-memory, and the MCP reference "memory" server.
